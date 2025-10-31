@@ -18,6 +18,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   const BANNER_ID = 'focuscoach-banner';
   const BANNER_HEIGHT = 44; // px
   const ANALYZER_SCRIPT_ID = 'focuscoach-page-analyzer';
+  let timerInterval = null;
+  let endAtTs = null;
 
   function getBanner() {
     return document.getElementById(BANNER_ID);
@@ -30,6 +32,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       document.documentElement.style.removeProperty('--focuscoach-banner-height');
       document.body.style.setProperty('margin-top', null);
     } catch {}
+    stopTimer();
   }
 
   function createOrUpdateBanner(goalText) {
@@ -66,6 +69,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       text.style.cssText = 'flex:1 1 auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
       text.className = 'focuscoach-text';
 
+      const timer = document.createElement('span');
+      timer.className = 'focuscoach-timer';
+      timer.style.cssText = 'font-weight:600;opacity:.9';
+
       const close = document.createElement('button');
       close.textContent = 'Hide';
       close.ariaLabel = 'Hide goal banner for this page';
@@ -78,6 +85,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
       el.appendChild(dot);
       el.appendChild(text);
+      el.appendChild(timer);
       el.appendChild(close);
       document.documentElement.appendChild(el);
 
@@ -92,6 +100,44 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
     const t = el.querySelector('.focuscoach-text');
     if (t) t.textContent = `Goal: ${goalText}`;
+    // Ensure timer display updates
+    updateTimerDisplay();
+  }
+
+  function formatRemaining(ms) {
+    if (ms <= 0) return '00:00';
+    const total = Math.floor(ms / 1000);
+    const m = Math.floor(total / 60);
+    const s = total % 60;
+    const mm = String(m).padStart(2, '0');
+    const ss = String(s).padStart(2, '0');
+    return `${mm}:${ss}`;
+  }
+
+  function updateTimerDisplay() {
+    const el = getBanner();
+    if (!el) return;
+    const timerEl = el.querySelector('.focuscoach-timer');
+    if (!timerEl) return;
+    if (!endAtTs) { timerEl.textContent = ''; return; }
+    const remaining = endAtTs - Date.now();
+    timerEl.textContent = `⏳ ${formatRemaining(remaining)}`;
+  }
+
+  function stopTimer() {
+    if (timerInterval) {
+      clearInterval(timerInterval);
+      timerInterval = null;
+    }
+  }
+
+  function startTimer() {
+    stopTimer();
+    if (!endAtTs) return;
+    updateTimerDisplay();
+    timerInterval = setInterval(() => {
+      updateTimerDisplay();
+    }, 1000);
   }
 
   function injectAnalyzerOnce() {
@@ -130,9 +176,19 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
   function initFromStorage() {
     try {
-      chrome.storage.sync.get(['userGoal', 'focusMode'], ({ userGoal, focusMode }) => {
+      chrome.storage.sync.get(['userGoal', 'focusMode', 'focusEndAt', 'focusDuration'], ({ userGoal, focusMode, focusEndAt, focusDuration }) => {
+        endAtTs = typeof focusEndAt === 'number' ? focusEndAt : null;
+
+        // If focus is enabled but no end is set (or it's expired), start a session now
+        if (focusMode && (!endAtTs || endAtTs <= Date.now())) {
+          const mins = typeof focusDuration === 'number' ? focusDuration : 30;
+          endAtTs = Date.now() + mins * 60 * 1000;
+          try { chrome.storage.sync.set({ focusEndAt: endAtTs }); } catch {}
+        }
+
         if (focusMode && userGoal) createOrUpdateBanner(userGoal); else removeBanner();
         if (focusMode && userGoal) requestAnalysis(userGoal);
+        if (focusMode && endAtTs) startTimer(); else stopTimer();
       });
     } catch {}
   }
@@ -154,11 +210,22 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       if (changes.userGoal) goalChanged = true;
       if (changes.focusMode) modeChanged = true;
       // autoAnalyze removed; focusMode drives both banner and auto-analysis
+      const endChanged = !!changes.focusEndAt;
 
-      if (goalChanged || modeChanged) {
-        chrome.storage.sync.get(['userGoal', 'focusMode'], ({ userGoal, focusMode }) => {
+      if (goalChanged || modeChanged || endChanged) {
+        chrome.storage.sync.get(['userGoal', 'focusMode', 'focusEndAt', 'focusDuration'], ({ userGoal, focusMode, focusEndAt, focusDuration }) => {
+          endAtTs = typeof focusEndAt === 'number' ? focusEndAt : null;
+
+          // Backfill or refresh session end if needed
+          if (focusMode && (!endAtTs || endAtTs <= Date.now())) {
+            const mins = typeof focusDuration === 'number' ? focusDuration : 30;
+            endAtTs = Date.now() + mins * 60 * 1000;
+            try { chrome.storage.sync.set({ focusEndAt: endAtTs }); } catch {}
+          }
+
           if (focusMode && userGoal) createOrUpdateBanner(userGoal); else removeBanner();
           if (focusMode && userGoal) requestAnalysis(userGoal);
+          if (focusMode && endAtTs) startTimer(); else stopTimer();
         });
       }
     });

@@ -4,6 +4,7 @@ const statusEl = document.getElementById("status");
 const summaryEl = document.getElementById("summary");
 const relevanceEl = document.getElementById("relevance");
 const focusToggle = document.getElementById("focusMode");
+const focusDurationEl = document.getElementById("focusDuration");
 
 
 // Auto-save goal (debounced)
@@ -20,9 +21,10 @@ goalInput.addEventListener('input', () => {
 });
 
 // Load saved goal and toggles when popup opens
-chrome.storage.sync.get(["userGoal", "focusMode"], async (res) => {
+chrome.storage.sync.get(["userGoal", "focusMode", "focusEndAt", "focusDuration"], async (res) => {
   if (res.userGoal) goalInput.value = res.userGoal;
   if (typeof res.focusMode === 'boolean') focusToggle.checked = res.focusMode;
+  if (typeof res.focusDuration === 'number') focusDurationEl.value = String(res.focusDuration);
 
   // If focus mode is on and goal exists, automatically analyze current page
   if (focusToggle.checked && goalInput.value.trim()) {
@@ -33,7 +35,16 @@ chrome.storage.sync.get(["userGoal", "focusMode"], async (res) => {
 // Toggle focus mode (also enables global auto-analyze behavior)
 focusToggle.addEventListener('change', async () => {
   const goal = goalInput.value.trim();
-  chrome.storage.sync.set({ focusMode: focusToggle.checked }, async () => {
+  const minutes = Number(focusDurationEl.value || '30');
+  const payload = { focusMode: focusToggle.checked };
+  if (focusToggle.checked) {
+    payload.focusDuration = minutes;
+    payload.focusEndAt = Date.now() + minutes * 60 * 1000;
+  } else {
+    payload.focusEndAt = null;
+  }
+
+  chrome.storage.sync.set(payload, async () => {
     statusEl.textContent = focusToggle.checked ? "🎯 Focus mode ON" : "Focus mode OFF";
     setTimeout(() => (statusEl.textContent = ""), 1200);
 
@@ -44,6 +55,12 @@ focusToggle.addEventListener('change', async () => {
       } catch {}
     }
   });
+});
+
+// Persist duration selection
+focusDurationEl.addEventListener('change', () => {
+  const minutes = Number(focusDurationEl.value || '30');
+  chrome.storage.sync.set({ focusDuration: minutes });
 });
 
 // (Auto analyze toggle removed; Focus mode controls analysis)
