@@ -1,19 +1,3 @@
-function extractMainText() {
-  const el = document.querySelector('article, main') || document.body;
-  const clone = el.cloneNode(true);
-  clone.querySelectorAll('script, style, nav, aside, noscript').forEach(n => n.remove());
-  const text = (clone.innerText || "").replace(/\s+/g, " ").trim();
-  return text.slice(0, 20000);
-}
-
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-  if (msg?.type === "GET_PAGE_TEXT") {
-    sendResponse({ text: extractMainText(), url: location.href });
-  }
-});
-
-// ---------------- Focus Mode Banner -----------------
-
 (() => {
   const BANNER_ID = 'focuscoach-banner';
   const BANNER_HEIGHT = 44; // px
@@ -204,9 +188,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   try {
     chrome.storage.onChanged.addListener((changes, area) => {
       if (area !== 'sync') return;
-      let goalChanged = false;
-      let modeChanged = false;
-      let autoChanged = false;
+  let goalChanged = false;
+  let modeChanged = false;
       if (changes.userGoal) goalChanged = true;
       if (changes.focusMode) modeChanged = true;
       // autoAnalyze removed; focusMode drives both banner and auto-analysis

@@ -13,9 +13,18 @@ goalInput.addEventListener('input', () => {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     const goal = goalInput.value.trim();
-    chrome.storage.sync.set({ userGoal: goal }, () => {
-      statusEl.textContent = goal ? "✅ Goal saved" : "";
-      setTimeout(() => (statusEl.textContent = ""), 1000);
+
+    // Turn off focus mode when editing goal
+    chrome.storage.sync.set({ 
+      userGoal: goal,
+      focusMode: false,
+      focusEndAt: null
+    }, () => {
+      focusToggle.checked = false;
+      statusEl.textContent = goal ? "Goal updated — Focus mode turned OFF" : "";
+      // Clear any relevance/summary while focus mode is OFF
+      try { if (relevanceEl) relevanceEl.textContent = ""; } catch {}
+      try { if (summaryEl) summaryEl.textContent = ""; } catch {}
     });
   }, 300);
 });
@@ -26,8 +35,12 @@ chrome.storage.sync.get(["userGoal", "focusMode", "focusEndAt", "focusDuration"]
   if (typeof res.focusMode === 'boolean') focusToggle.checked = res.focusMode;
   if (typeof res.focusDuration === 'number') focusDurationEl.value = String(res.focusDuration);
 
-  // If focus mode is on and goal exists, automatically analyze current page
-  if (focusToggle.checked && goalInput.value.trim()) {
+  // If focus mode is OFF, ensure relevance/summary are empty
+  if (!focusToggle.checked) {
+    try { if (relevanceEl) relevanceEl.textContent = ""; } catch {}
+    try { if (summaryEl) summaryEl.textContent = ""; } catch {}
+  } else if (goalInput.value.trim()) {
+    // If focus mode is ON and goal exists, (optional) analyze current page
     try { await analyzePage(); } catch {}
   }
 });
@@ -45,7 +58,7 @@ focusToggle.addEventListener('change', async () => {
   }
 
   chrome.storage.sync.set(payload, async () => {
-    statusEl.textContent = focusToggle.checked ? "🎯 Focus mode ON" : "Focus mode OFF";
+    statusEl.textContent = focusToggle.checked ? "Focus mode ON" : "Focus mode OFF";
     setTimeout(() => (statusEl.textContent = ""), 1200);
 
     // If enabling focus mode and a goal exists, immediately analyze current page for quick feedback
@@ -53,6 +66,10 @@ focusToggle.addEventListener('change', async () => {
       try {
         await analyzePage();
       } catch {}
+    } else {
+      // Turning OFF: clear relevance/summary immediately
+      try { if (relevanceEl) relevanceEl.textContent = ""; } catch {}
+      try { if (summaryEl) summaryEl.textContent = ""; } catch {}
     }
   });
 });
@@ -85,7 +102,7 @@ async function analyzePage() {
 
   const goal = goalInput.value.trim();
   if (!goal) {
-    statusEl.textContent = "❗ Please set your goal first";
+    statusEl.textContent = "Please set your goal first";
     return;
   }
 
@@ -109,6 +126,7 @@ async function analyzePage() {
 Your ONLY job is to evaluate if the webpage helps the user achieve their goal.\
 User goal: '+ goal + '\
 STRICT RULES: \
+- Be a strong and strict evaluator. like you dont wanna your user to divert from their goal\
 - If content does NOT relate to the goal → Relevance MUST be 0 and Recommendation MUST be SKIP.\
 - Do NOT give partial credit (no 10, 20, 30). Use 0 for irrelevant content.\
 - Only score above 70 if content DIRECTLY teaches concepts tied to the goal.\
@@ -162,10 +180,10 @@ Recommendation: READ or SKIP'
     summaryEl.textContent = summary;
     relevanceEl.innerHTML = `<span><b>${score}</b></span><span class="rec ${rec === 'READ' ? 'good' : 'bad'}"><b>${rec}</b></span>`;
 
-    statusEl.textContent = "✅ Done!";
+    statusEl.textContent = "Done!";
   } catch (e) {
     console.error(e);
-    statusEl.textContent = "❌ Error: " + e.message;
+    statusEl.textContent = "Error: " + e.message;
   }
 }
 
