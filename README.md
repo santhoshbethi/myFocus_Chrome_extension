@@ -35,7 +35,7 @@ Goal-aligned page analyzer and summarizer that uses Chrome's on-device AI to aut
   - Content script runs at `document_start`, shows a small goal banner, and analyzes pages automatically when Focus mode is ON and a goal exists
   - Updates the banner with the recommendation (READ/SKIP) and score after analysis
   - Starts a focus session timer when Focus mode is enabled; stores the session end (`focusEndAt`) and shows a live ⏳ mm:ss countdown on each page
-  - On YouTube, when the on-device model is available, it scores each video card against your goal and blurs only non-matching videos (score < 60). If the model is unavailable, no blurring is applied.
+  - On YouTube, when the on-device model is available, it scores each video card against your goal 
 
 - Analysis pipeline:
   1) Prompt API (Language Model): instruction-style prompt produces Summary, Relevance, and Recommendation (used directly from the content script)
@@ -92,7 +92,7 @@ To disable globally, toggle Focus mode OFF.
   - `manifest.json` — MV3 manifest
   - `popup.html`, `styles.css` — UI
   - `popup.js` — goal auto-save, Focus mode control, analysis display
-  - `content.js` — banner + direct analysis (on-device model only) and YouTube meta scoring/blur
+  - `content.js` — banner + direct analysis (on-device model only) and YouTube meta scoring
 
 - Debugging tips:
   - Popup logs: open the popup → right‑click → Inspect → Console
