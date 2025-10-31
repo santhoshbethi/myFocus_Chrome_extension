@@ -1,6 +1,6 @@
 # FocusCoach AI (Chrome Extension)
 
-Goal-aligned page analyzer and summarizer that uses Chrome's on-device AI to automatically summarize pages and score their relevance to your personal learning goal.
+Goal-aligned page analyzer and summarizer that uses Chrome's on-device AI to automatically summarize pages and score their relevance to your personal learning goal. Requires on-device AI; if unavailable, analysis is disabled.
 
 ## Features
 
@@ -12,13 +12,13 @@ Goal-aligned page analyzer and summarizer that uses Chrome's on-device AI to aut
 - Popup: Relevance is always visible; Summary is hidden behind a collapsible section
 - Concise English summary (Markdown-like) when AI is available
 - Relevance score (0–100) and READ/SKIP recommendation with strict guardrails
-- Works without on-device AI via a local extractive and heuristic fallback
+- Requires on-device AI
 - Compact popup UI (300px width)
 
 ## Requirements
 
 - Chrome 127+ (best with Chrome Canary) on a supported platform
-- For on-device AI features (Prompt API / Summarizer API): enable the Chrome AI flags if required
+- For on-device AI features (Prompt API): enable the Chrome AI flags if required
 - No external servers or cloud keys needed; everything runs in the browser
 
 ## Install (Load Unpacked)
@@ -32,15 +32,13 @@ Goal-aligned page analyzer and summarizer that uses Chrome's on-device AI to aut
 ## How it works
 
 - Focus mode (global):
-  - Content script runs at `document_start`, shows a small goal banner, and requests analysis automatically on each page
-  - Injects a tiny page script (`page-analyzer.js`) to access `window.ai` Prompt API from the page context
+  - Content script runs at `document_start`, shows a small goal banner, and analyzes pages automatically when Focus mode is ON and a goal exists
   - Updates the banner with the recommendation (READ/SKIP) and score after analysis
   - Starts a focus session timer when Focus mode is enabled; stores the session end (`focusEndAt`) and shows a live ⏳ mm:ss countdown on each page
+  - On YouTube, when the on-device model is available, it scores each video card against your goal and blurs only non-matching videos (score < 60). If the model is unavailable, no blurring is applied.
 
 - Analysis pipeline:
-  1) Prompt API (Language Model): instruction-style prompt produces Summary, Relevance, and Recommendation
-  2) Summarizer API: key-points summary with explicit `language: "en"` when Prompt API is not used
-  3) Local fallback: extractive summary and keyword-overlap heuristic for relevance
+  1) Prompt API (Language Model): instruction-style prompt produces Summary, Relevance, and Recommendation (used directly from the content script)
 
 - Guardrails:
   - Strict heuristic keyword matching blended with model score to avoid off-topic false positives
@@ -51,11 +49,9 @@ Goal-aligned page analyzer and summarizer that uses Chrome's on-device AI to aut
 This project uses Chrome's built‑in (on-device) AI APIs and standard extension APIs:
 
 - Chrome AI (on-device):
-  - Prompt API (Language Model): `window.ai.languageModel` / `LanguageModel`
+  - Prompt API (Language Model): `LanguageModel`
     - Used for instruction-style prompting to generate summaries and relevance assessments
     - Session configuration includes `expectedInputs/expectedOutputs` with `languages: ["en"]` to ensure English output
-  - Summarizer API: `Summarizer`
-    - Used to produce key-points summaries with explicit output language `en`
 
 - Chrome Extension APIs:
   - `chrome.tabs` (query active tab)
@@ -66,8 +62,7 @@ This project uses Chrome's built‑in (on-device) AI APIs and standard extension
 - Manifest host permissions:
   - `"host_permissions": ["<all_urls>"]` to access the active tab’s content for analysis
 
-- Web Accessible Resources:
-  - `page-analyzer.js` is exposed to pages so it can be injected and call `window.ai`
+<!-- No web-accessible resources are required -->
 
 Notes:
 - These are Google/Chrome-provided APIs that run locally (no Google Cloud API keys).
@@ -97,19 +92,17 @@ To disable globally, toggle Focus mode OFF.
   - `manifest.json` — MV3 manifest
   - `popup.html`, `styles.css` — UI
   - `popup.js` — goal auto-save, Focus mode control, analysis display
-  - `content.js` — banner + auto analysis trigger and result relay
-  - `page-analyzer.js` — in-page analyzer using `window.ai` (Prompt API) with fallbacks
+  - `content.js` — banner + direct analysis (on-device model only) and YouTube meta scoring/blur
 
 - Debugging tips:
   - Popup logs: open the popup → right‑click → Inspect → Console
   - Content script logs: open DevTools on the page → Console
   - Service worker logs (if added): `chrome://extensions` → your extension → "Service worker"
-  - Banner present but no results? Check the page console for `FOCUSCOACH_RESULT` messages
 
 ## Limitations
 
 - Some pages (e.g., `chrome://` and certain web store pages) block content scripts
-- On-device AI availability varies by Chrome version and platform; flags may be needed
+- On-device AI availability varies by Chrome version and platform; flags may be needed. If unavailable, analysis and YouTube filtering are disabled.
 - The timer counts down to 00:00 but (by default) does not automatically turn off Focus mode; you can toggle it off anytime in the popup
 
 ## License

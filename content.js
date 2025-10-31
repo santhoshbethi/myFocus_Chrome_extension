@@ -1,9 +1,11 @@
 (() => {
   const BANNER_ID = 'focuscoach-banner';
   const BANNER_HEIGHT = 44; // px
-  const ANALYZER_SCRIPT_ID = 'focuscoach-page-analyzer';
   let timerInterval = null;
   let endAtTs = null;
+  let analyzing = false;
+  let lmSession = null;
+  let lmReady = false;
 
   function getBanner() {
     return document.getElementById(BANNER_ID);
@@ -124,39 +126,87 @@
     }, 1000);
   }
 
-  function injectAnalyzerOnce() {
-    if (document.getElementById(ANALYZER_SCRIPT_ID)) return;
-    const s = document.createElement('script');
-    s.id = ANALYZER_SCRIPT_ID;
-    s.src = chrome.runtime.getURL('page-analyzer.js');
-    s.type = 'text/javascript';
-    (document.head || document.documentElement).appendChild(s);
-  }
+  // Minimal helpers for direct analysis (no fallback)
+  function clamp(n, min, max) { return Math.max(min, Math.min(max, n)); }
+  function safeText(x) { return (x || '').toString().replace(/\s+/g, ' ').trim(); }
 
-  function requestAnalysis(goal) {
+  async function ensureModel() {
+    if (lmReady) return true;
     try {
-      injectAnalyzerOnce();
-      window.postMessage({ type: 'FOCUSCOACH_ANALYZE', goal, maxLen: 6000 }, '*');
-    } catch {}
-  }
-
-  // Receive analysis result from the page context
-  window.addEventListener('message', (event) => {
-    try {
-      if (event.source !== window) return;
-    } catch { return; }
-    const data = event.data || {};
-    if (data.type !== 'FOCUSCOACH_RESULT') return;
-    const { summary, relevance, recommendation } = data;
-    // Update banner if visible
-    const el = document.getElementById(BANNER_ID);
-    if (el) {
-      const t = el.querySelector('.focuscoach-text');
-      if (t) {
-        t.textContent = `${t.textContent} — ${recommendation} ${relevance}%`;
+      if (window.LanguageModel?.availability) {
+        const a = await window.LanguageModel.availability();
+        if (a === 'readily' || a === true) {
+          lmSession = await window.LanguageModel.create({
+            expectedInputs: [{ type: 'text', languages: ['en'] }],
+            expectedOutputs: [{ type: 'text', languages: ['en'] }]
+          });
+          lmReady = true;
+          return true;
+        }
       }
+    } catch {}
+    return false;
+  }
+
+  function getPageSample(maxLen = 6000) {
+    try {
+      const title = document.title || '';
+      const metaDesc = document.querySelector('meta[name="description"]')?.getAttribute('content') || '';
+      const h1 = Array.from(document.querySelectorAll('h1')).map(n => safeText(n.textContent)).filter(Boolean).join(' \n');
+      const h2 = Array.from(document.querySelectorAll('h2')).map(n => safeText(n.textContent)).filter(Boolean).join(' \n');
+      const bodyText = safeText(document.body?.innerText || '');
+      const combined = [
+        title && `Title: ${title}`,
+        metaDesc && `Description: ${metaDesc}`,
+        h1 && `H1: ${h1}`,
+        h2 && `H2: ${h2}`,
+        bodyText && `Body: ${bodyText}`
+      ].filter(Boolean).join('\n\n');
+      return combined.slice(0, maxLen);
+    } catch {
+      return document.body?.innerText?.slice(0, maxLen) || '';
     }
-  });
+  }
+
+  function buildPagePrompt(goal, pageText) {
+    const instruction = (
+      'You are FocusCoach. Strictly evaluate if the page helps the user achieve their goal.\n' +
+      'Rules:\n' +
+      '- Be strict: most pages should be SKIP.\n' +
+      '- If content is not directly helpful → Relevance=0 and Recommendation=SKIP.\n' +
+      '- Only score ≥70 when it clearly advances the goal; 60–69 is borderline (SKIM).\n' +
+      'Return EXACT format:\n' +
+      'Summary: <1-2 lines>\nRelevance: <0-100>\nRecommendation: READ or SKIP\n'
+    );
+    return `${instruction}\nUser Goal: ${goal}\n\nPage Content (truncated):\n${pageText}\n\nRespond with only the three labeled lines.`;
+  }
+
+  function parsePageResult(raw) {
+    const summary = raw.match(/Summary:(.*)/i)?.[1]?.trim() || '';
+    const relStr = raw.match(/Relevance:([^\n]+)/i)?.[1]?.trim() || '0';
+    const recommendation = (raw.match(/Recommendation:([^\n]+)/i)?.[1]?.trim() || 'SKIP').toUpperCase();
+    let relevance = Number(relStr.replace(/[^0-9.]/g, ''));
+    if (!Number.isFinite(relevance)) relevance = 0;
+    relevance = clamp(Math.round(relevance), 0, 100);
+    return { summary, relevance, recommendation };
+  }
+
+  async function analyzeCurrentPage(goal) {
+    if (analyzing) return;
+    if (!(await ensureModel())) return; // No fallback
+    analyzing = true;
+    try {
+      const raw = await lmSession.prompt(buildPagePrompt(goal, getPageSample(6000)));
+      const { relevance, recommendation } = parsePageResult(String(raw || ''));
+      const el = document.getElementById(BANNER_ID);
+      if (el) {
+        const t = el.querySelector('.focuscoach-text');
+        if (t) t.textContent = `Goal: ${goal} — ${recommendation} ${relevance}%`;
+      }
+    } catch {} finally {
+      analyzing = false;
+    }
+  }
 
   function initFromStorage() {
     try {
@@ -171,7 +221,7 @@
         }
 
         if (focusMode && userGoal) createOrUpdateBanner(userGoal); else removeBanner();
-        if (focusMode && userGoal) requestAnalysis(userGoal);
+        if (focusMode && userGoal) analyzeCurrentPage(userGoal);
         if (focusMode && endAtTs) startTimer(); else stopTimer();
         // Kick off YouTube scoring on first load
         manageYouTubeScanning({ enabled: !!(focusMode && userGoal), goal: userGoal || '' });
@@ -209,7 +259,7 @@
           }
 
           if (focusMode && userGoal) createOrUpdateBanner(userGoal); else removeBanner();
-          if (focusMode && userGoal) requestAnalysis(userGoal);
+          if (focusMode && userGoal) analyzeCurrentPage(userGoal);
           if (focusMode && endAtTs) startTimer(); else stopTimer();
 
           // YouTube scoring lifecycle
@@ -229,6 +279,7 @@
   let ytObserver = null;
   let ytScanning = false;
   let ytGoal = '';
+  let ytScoring = false;
 
   function isYouTube() {
     try { return location.hostname.includes('youtube.com'); } catch { return false; }
@@ -238,7 +289,11 @@
     ytGoal = goal || '';
     if (!isYouTube()) { stopYouTubeScanning(); return; }
     if (!enabled) { stopYouTubeScanning(); clearYouTubeBlurs(); return; }
-    startYouTubeScanning();
+    // Only run if model is available — no fallback
+    ensureModel().then((ok) => {
+      if (!ok) { stopYouTubeScanning(); clearYouTubeBlurs(); return; }
+      startYouTubeScanning();
+    });
   }
 
   function startYouTubeScanning() {
@@ -307,22 +362,13 @@
     };
   }
 
-  function heuristicScore(goal, meta) {
-    const goalWords = (goal || '').toLowerCase().split(/\W+/).filter(w => w.length > 3);
-    if (!goalWords.length) return 0;
-    const title = (meta.title || '').toLowerCase();
-    const channel = (meta.channel || '').toLowerCase();
-    const snippet = (meta.snippet || '').toLowerCase();
-
-    let pts = 0;
-    let maxPts = goalWords.length * 3;
-    for (const w of goalWords) {
-      if (title.includes(w)) pts += 3;
-      else if (channel.includes(w)) pts += 2;
-      else if (snippet.includes(w)) pts += 1;
-    }
-    const score = Math.round((pts / Math.max(1, maxPts)) * 100);
-    return Math.max(0, Math.min(100, score));
+  function buildYTPrompt(goal, metaText) {
+    return (
+      'You are FocusCoach. Score how well a YouTube video matches the user goal.\n' +
+      'Return ONLY: Relevance: <0-100>\n' +
+      `User Goal: ${goal}\n\nVideo Meta:\n${metaText.slice(0, 800)}\n\n` +
+      'Relevance: '
+    );
   }
 
   function ensureBlurStyle() {
@@ -379,15 +425,29 @@
 
   async function scanAndScoreYouTube() {
     if (!ytGoal) return;
+    if (!lmReady) return; // no fallback
     const nodes = Array.from(document.querySelectorAll(YT.selectors));
+    let count = 0;
     for (const el of nodes) {
       if (el.dataset.focuscoachScored === '1') continue;
       const meta = extractVideoMeta(el);
       if (!meta.title) { el.dataset.focuscoachScored = '1'; continue; }
-      const score = heuristicScore(ytGoal, meta);
-      el.dataset.focuscoachScored = '1';
-      el.dataset.focuscoachScore = String(score);
-      if (score < YT.blurThreshold) applyBlurWithToggle(el, score); else clearBlur(el);
+      // Limit per scan to avoid spamming the model
+      if (count >= 8) break;
+      count++;
+      try {
+        const raw = await lmSession.prompt(buildYTPrompt(ytGoal, meta.text));
+        const match = String(raw || '').match(/Relevance:([^\n]+)/i);
+        let score = Number((match?.[1] || '').replace(/[^0-9.]/g, '').trim());
+        if (!Number.isFinite(score)) score = 0;
+        score = clamp(Math.round(score), 0, 100);
+        el.dataset.focuscoachScored = '1';
+        el.dataset.focuscoachScore = String(score);
+        if (score < YT.blurThreshold) applyBlurWithToggle(el, score); else clearBlur(el);
+      } catch {
+        // On error, mark scored to avoid loops, but do not blur
+        el.dataset.focuscoachScored = '1';
+      }
     }
   }
 })();
