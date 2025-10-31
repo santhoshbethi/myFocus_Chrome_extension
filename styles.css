@@ -1,0 +1,7 @@
+body { font: 14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; width: 360px; padding: 12px; }
+h2 { margin: 0 0 8px; }
+label { display:block; margin:8px 0 4px; font-weight:600; }
+textarea { width: 100%; }
+button { margin-top:8px; }
+#status { margin:10px 0; opacity:.8; }
+#summary, #relevance { background:#f6f6f6; padding:8px; border-radius:8px; min-height:40px; white-space:pre-wrap; }
