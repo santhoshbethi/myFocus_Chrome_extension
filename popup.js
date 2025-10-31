@@ -1,25 +1,52 @@
 // DOM elements
 const goalInput = document.getElementById("goal");
-const saveGoalBtn = document.getElementById("saveGoal");
-const analyzeBtn = document.getElementById("analyze");
 const statusEl = document.getElementById("status");
 const summaryEl = document.getElementById("summary");
 const relevanceEl = document.getElementById("relevance");
+const focusToggle = document.getElementById("focusMode");
 
-// Save goal
-saveGoalBtn.addEventListener("click", () => {
+
+// Auto-save goal (debounced)
+let saveTimer;
+goalInput.addEventListener('input', () => {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    const goal = goalInput.value.trim();
+    chrome.storage.sync.set({ userGoal: goal }, () => {
+      statusEl.textContent = goal ? "✅ Goal saved" : "";
+      setTimeout(() => (statusEl.textContent = ""), 1000);
+    });
+  }, 300);
+});
+
+// Load saved goal and toggles when popup opens
+chrome.storage.sync.get(["userGoal", "focusMode"], async (res) => {
+  if (res.userGoal) goalInput.value = res.userGoal;
+  if (typeof res.focusMode === 'boolean') focusToggle.checked = res.focusMode;
+
+  // If focus mode is on and goal exists, automatically analyze current page
+  if (focusToggle.checked && goalInput.value.trim()) {
+    try { await analyzePage(); } catch {}
+  }
+});
+
+// Toggle focus mode (also enables global auto-analyze behavior)
+focusToggle.addEventListener('change', async () => {
   const goal = goalInput.value.trim();
-  if (!goal) return alert("Enter a goal first!");
-  chrome.storage.sync.set({ userGoal: goal }, () => {
-    statusEl.textContent = "✅ Goal saved!";
-    setTimeout(() => (statusEl.textContent = ""), 1500);
+  chrome.storage.sync.set({ focusMode: focusToggle.checked }, async () => {
+    statusEl.textContent = focusToggle.checked ? "🎯 Focus mode ON" : "Focus mode OFF";
+    setTimeout(() => (statusEl.textContent = ""), 1200);
+
+    // If enabling focus mode and a goal exists, immediately analyze current page for quick feedback
+    if (focusToggle.checked && goal) {
+      try {
+        await analyzePage();
+      } catch {}
+    }
   });
 });
 
-// Load saved goal when popup opens
-chrome.storage.sync.get("userGoal", (res) => {
-  if (res.userGoal) goalInput.value = res.userGoal;
-});
+// (Auto analyze toggle removed; Focus mode controls analysis)
 
 // Get page text
 async function getPageContent() {
@@ -112,15 +139,11 @@ Recommendation: READ or SKIP'
 
     // Parse fields
     const summary = response.match(/Summary:(.*)/i)?.[1]?.trim() ?? "";
-    const score = response.match(/Relevance:(.*)/i)?.[1]?.trim() ?? "";
-    const rec = response.match(/Recommendation:(.*)/i)?.[1]?.trim() ?? "";
+    const score = response.match(/Relevance:(.*)/i)?.[1]?.trim() ?? "0";
+    const rec = (response.match(/Recommendation:(.*)/i)?.[1]?.trim() ?? "").toUpperCase();
 
     summaryEl.textContent = summary;
-    relevanceEl.innerHTML = `
-      Score: <b>${score}</b><br>
-      Goal: <b>${goal}</b><br>
-      Recommendation: <b style="color:${rec === "READ" ? "green" : "red"}">${rec}</b>
-    `;
+    relevanceEl.innerHTML = `<span><b>${score}</b></span><span class="rec ${rec === 'READ' ? 'good' : 'bad'}"><b>${rec}</b></span>`;
 
     statusEl.textContent = "✅ Done!";
   } catch (e) {
@@ -129,4 +152,4 @@ Recommendation: READ or SKIP'
   }
 }
 
-analyzeBtn.addEventListener("click", analyzePage);
+// No manual analyze button; analysis happens automatically when Focus mode is enabled
