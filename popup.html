@@ -10,19 +10,27 @@
 
   <label>Goal</label>
   <textarea id="goal" rows="3" placeholder="e.g., Learn system design for FAANG interviews"></textarea>
-  <button id="saveGoal">Save Goal</button>
+
+  <div style="margin-top:8px; display:flex; align-items:center; justify-content:space-between; gap:10px;">
+    <span title="Show your goal on pages and auto-analyze them">Focus mode</span>
+    <label class="switch">
+      <input type="checkbox" id="focusMode" />
+      <span class="slider"></span>
+    </label>
+  </div>
 
   <hr/>
 
-  <button id="analyze">Analyze This Page</button>
-
   <div id="status"></div>
 
-  <h3>Summary</h3>
-  <div id="summary"></div>
-
-  <h3>Relevance</h3>
+  <h3 style="margin:10px 0 4px;">Relevance</h3>
   <div id="relevance"></div>
+
+  <details id="results" style="margin-top:10px;">
+    <summary>Summary (click to expand)</summary>
+    <div style="margin-top:8px"></div>
+    <div id="summary"></div>
+  </details>
 
   <script src="popup.js" defer></script>
 </body>
