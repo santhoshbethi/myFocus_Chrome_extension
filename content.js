@@ -173,6 +173,8 @@
         if (focusMode && userGoal) createOrUpdateBanner(userGoal); else removeBanner();
         if (focusMode && userGoal) requestAnalysis(userGoal);
         if (focusMode && endAtTs) startTimer(); else stopTimer();
+        // Kick off YouTube scoring on first load
+        manageYouTubeScanning({ enabled: !!(focusMode && userGoal), goal: userGoal || '' });
       });
     } catch {}
   }
@@ -209,8 +211,183 @@
           if (focusMode && userGoal) createOrUpdateBanner(userGoal); else removeBanner();
           if (focusMode && userGoal) requestAnalysis(userGoal);
           if (focusMode && endAtTs) startTimer(); else stopTimer();
+
+          // YouTube scoring lifecycle
+          manageYouTubeScanning({ enabled: !!(focusMode && userGoal), goal: userGoal || '' });
         });
       }
     });
   } catch {}
+
+  // =========================
+  // YouTube meta scoring 🔎
+  // =========================
+  const YT = {
+    selectors: 'ytd-rich-item-renderer,ytd-video-renderer,ytd-grid-video-renderer,ytd-compact-video-renderer,ytd-reel-item-renderer',
+    blurThreshold: 60 // SKIP tier: blur only < 60
+  };
+  let ytObserver = null;
+  let ytScanning = false;
+  let ytGoal = '';
+
+  function isYouTube() {
+    try { return location.hostname.includes('youtube.com'); } catch { return false; }
+  }
+
+  function manageYouTubeScanning({ enabled, goal }) {
+    ytGoal = goal || '';
+    if (!isYouTube()) { stopYouTubeScanning(); return; }
+    if (!enabled) { stopYouTubeScanning(); clearYouTubeBlurs(); return; }
+    startYouTubeScanning();
+  }
+
+  function startYouTubeScanning() {
+    if (!isYouTube()) return;
+    if (!ytObserver) {
+      ytObserver = new MutationObserver(() => scheduleYouTubeScan());
+      ytObserver.observe(document.body, { childList: true, subtree: true });
+    }
+    scheduleYouTubeScan();
+  }
+
+  function stopYouTubeScanning() {
+    if (ytObserver) { try { ytObserver.disconnect(); } catch {} ytObserver = null; }
+    ytScanning = false;
+  }
+
+  function scheduleYouTubeScan() {
+    if (ytScanning) return;
+    ytScanning = true;
+    queueMicrotask(async () => {
+      try { await scanAndScoreYouTube(); } finally { ytScanning = false; }
+    });
+  }
+
+  function extractVideoMeta(el) {
+    const safe = (x) => (x || '').toString().replace(/\s+/g, ' ').trim();
+    // Title
+    const title = safe(
+      el.querySelector('#video-title')?.textContent ||
+      el.querySelector('a#video-title-link')?.textContent ||
+      el.querySelector('a[href*="/watch?"]')?.getAttribute('title') ||
+      el.getAttribute('aria-label')
+    );
+    // Channel
+    const channel = safe(
+      el.querySelector('#channel-name a, ytd-channel-name a, a.yt-simple-endpoint.style-scope.yt-formatted-string')?.textContent
+    );
+    // Metadata (views, age)
+    const metaLine = Array.from(el.querySelectorAll('#metadata-line span'))
+      .map(s => safe(s.textContent)).filter(Boolean).join(' • ');
+    // Badges
+    const badges = Array.from(el.querySelectorAll('ytd-badge-supported-renderer, .badge-style-type-live-now'))
+      .map(n => safe(n.textContent)).filter(Boolean).join(', ');
+    // Snippet
+    const snippet = safe(
+      el.querySelector('#description-text, #description, #content #description')?.textContent
+    );
+    // Shorts label
+    const shorts = safe(el.querySelector('a[href*="/shorts/"]')?.getAttribute('aria-label'));
+
+    const lines = [];
+    if (title) lines.push(`Title: ${title}`);
+    if (channel) lines.push(`Channel: ${channel}`);
+    if (metaLine) lines.push(`Meta: ${metaLine}`);
+    if (badges) lines.push(`Badges: ${badges}`);
+    if (snippet) lines.push(`Snippet: ${snippet}`);
+    if (shorts) lines.push(`Shorts: ${shorts}`);
+
+    return {
+      title,
+      channel,
+      metaLine,
+      badges,
+      snippet,
+      text: lines.join('\n')
+    };
+  }
+
+  function heuristicScore(goal, meta) {
+    const goalWords = (goal || '').toLowerCase().split(/\W+/).filter(w => w.length > 3);
+    if (!goalWords.length) return 0;
+    const title = (meta.title || '').toLowerCase();
+    const channel = (meta.channel || '').toLowerCase();
+    const snippet = (meta.snippet || '').toLowerCase();
+
+    let pts = 0;
+    let maxPts = goalWords.length * 3;
+    for (const w of goalWords) {
+      if (title.includes(w)) pts += 3;
+      else if (channel.includes(w)) pts += 2;
+      else if (snippet.includes(w)) pts += 1;
+    }
+    const score = Math.round((pts / Math.max(1, maxPts)) * 100);
+    return Math.max(0, Math.min(100, score));
+  }
+
+  function ensureBlurStyle() {
+    if (document.getElementById('focuscoach-yt-style')) return;
+    const st = document.createElement('style');
+    st.id = 'focuscoach-yt-style';
+    st.textContent = `
+      .focuscoach-blur { filter: blur(6px) brightness(0.85); transition: filter .2s ease; }
+      .focuscoach-veil { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; pointer-events:auto; }
+      .focuscoach-pill { background:#111c; color:#fff; border:1px solid #fff3; padding:6px 10px; border-radius:999px; font:600 12px -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif; cursor:pointer }
+    `;
+    document.documentElement.appendChild(st);
+  }
+
+  function findThumbContainer(el) {
+    return el.querySelector('#thumbnail') || el.querySelector('a#thumbnail') || el;
+  }
+
+  function applyBlurWithToggle(el, score) {
+    ensureBlurStyle();
+    const container = findThumbContainer(el);
+    if (!container) return;
+    container.style.position = container.style.position || 'relative';
+    container.classList.add('focuscoach-blur');
+
+    if (container.querySelector('.focuscoach-veil')) return;
+    const veil = document.createElement('div');
+    veil.className = 'focuscoach-veil';
+    const btn = document.createElement('button');
+    btn.className = 'focuscoach-pill';
+    btn.textContent = `Show (${score}%)`;
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      container.classList.remove('focuscoach-blur');
+      veil.remove();
+    });
+    veil.appendChild(btn);
+    container.appendChild(veil);
+  }
+
+  function clearBlur(el) {
+    const container = findThumbContainer(el);
+    if (!container) return;
+    container.classList.remove('focuscoach-blur');
+    const veil = container.querySelector('.focuscoach-veil');
+    if (veil) veil.remove();
+  }
+
+  function clearYouTubeBlurs() {
+    document.querySelectorAll('.focuscoach-blur').forEach((n) => n.classList.remove('focuscoach-blur'));
+    document.querySelectorAll('.focuscoach-veil').forEach((n) => n.remove());
+    document.querySelectorAll(YT.selectors).forEach(el => { delete el.dataset.focuscoachScored; delete el.dataset.focuscoachScore; });
+  }
+
+  async function scanAndScoreYouTube() {
+    if (!ytGoal) return;
+    const nodes = Array.from(document.querySelectorAll(YT.selectors));
+    for (const el of nodes) {
+      if (el.dataset.focuscoachScored === '1') continue;
+      const meta = extractVideoMeta(el);
+      if (!meta.title) { el.dataset.focuscoachScored = '1'; continue; }
+      const score = heuristicScore(ytGoal, meta);
+      el.dataset.focuscoachScored = '1';
+      el.dataset.focuscoachScore = String(score);
+      if (score < YT.blurThreshold) applyBlurWithToggle(el, score); else clearBlur(el);
+    }
+  }
 })();
