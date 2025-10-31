@@ -8,6 +8,7 @@ Goal-aligned page analyzer and summarizer that uses Chrome's on-device AI to aut
 - Single toggle: Focus mode
   - Shows your goal as a subtle banner on pages
   - Automatically analyzes every page against your goal (no extra clicks)
+- Focus session timer with presets (15/30/45/60 min) and a live ⏳ countdown on the banner
 - Popup: Relevance is always visible; Summary is hidden behind a collapsible section
 - Concise English summary (Markdown-like) when AI is available
 - Relevance score (0–100) and READ/SKIP recommendation with strict guardrails
@@ -34,6 +35,7 @@ Goal-aligned page analyzer and summarizer that uses Chrome's on-device AI to aut
   - Content script runs at `document_start`, shows a small goal banner, and requests analysis automatically on each page
   - Injects a tiny page script (`page-analyzer.js`) to access `window.ai` Prompt API from the page context
   - Updates the banner with the recommendation (READ/SKIP) and score after analysis
+  - Starts a focus session timer when Focus mode is enabled; stores the session end (`focusEndAt`) and shows a live ⏳ mm:ss countdown on each page
 
 - Analysis pipeline:
   1) Prompt API (Language Model): instruction-style prompt produces Summary, Relevance, and Recommendation
@@ -79,10 +81,12 @@ Notes:
 ## Usage
 
 1. Open the popup and type your goal — it auto-saves.
-2. Toggle Focus mode ON.
-3. Browse normally:
+2. Pick a Duration (15/30/45 min or 1 hour).
+3. Toggle Focus mode ON.
+4. Browse normally:
   - A banner shows your goal on each page (with a per-page Hide button)
   - Analysis runs automatically; the banner updates with READ/SKIP and score
+  - The banner shows a live ⏳ timer for your session (mm:ss)
   - Open the popup to see Relevance immediately and expand Summary when needed
 
 To disable globally, toggle Focus mode OFF.
@@ -106,6 +110,7 @@ To disable globally, toggle Focus mode OFF.
 
 - Some pages (e.g., `chrome://` and certain web store pages) block content scripts
 - On-device AI availability varies by Chrome version and platform; flags may be needed
+- The timer counts down to 00:00 but (by default) does not automatically turn off Focus mode; you can toggle it off anytime in the popup
 
 ## License
 
